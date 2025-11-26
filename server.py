@@ -122,13 +122,14 @@ def download_youtube_media(url, mode="audio"):
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        # Browser Masquerade (Standard, safe User-Agent)
+        'verbose': True, # ENABLE DEBUG LOGS
+        # Mimic standard Chrome
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
     }
 
-    # --- THE COOKIE CLEANER (Based on yt-dlp Wiki) ---
+    # --- AGGRESSIVE COOKIE CLEANER ---
     try:
         if os.path.exists("/etc/secrets"):
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
@@ -138,35 +139,41 @@ def download_youtube_media(url, mode="audio"):
                 if os.path.exists(read_only_path):
                     print(f"SUCCESS: Found raw cookie file at {read_only_path}")
                     
-                    # Define destination
                     writable_path = os.path.join(temp_dir, "clean_cookies.txt")
                     
-                    # CLEAN THE FILE (Fix Newlines & Formatting)
                     with open(read_only_path, 'r', encoding='utf-8') as infile:
-                        content = infile.read()
+                        raw_lines = infile.readlines()
+                    
+                    clean_lines = []
+                    # Ensure Header exists
+                    clean_lines.append("# Netscape HTTP Cookie File\n")
+                    
+                    for line in raw_lines:
+                        # Strip whitespace and check if line is empty
+                        s_line = line.strip()
+                        if not s_line or s_line.startswith("# Netscape"): 
+                            continue # Skip empty lines and duplicate headers
                         
-                        # 1. Force Linux Newlines (\n only, no \r)
-                        content = content.replace('\r\n', '\n').replace('\r', '\n')
-                        
-                        # 2. Ensure Netscape Header exists (Crucial per Wiki)
-                        if "# Netscape HTTP Cookie File" not in content:
-                            content = "# Netscape HTTP Cookie File\n" + content
+                        # Add valid lines back with Linux newline
+                        clean_lines.append(s_line + "\n")
                             
                     with open(writable_path, 'w', encoding='utf-8') as outfile:
-                        outfile.write(content)
+                        outfile.writelines(clean_lines)
                         
-                    print(f"CLEANED and saved cookies to: {writable_path}")
+                    print(f"CLEANED cookies saved to: {writable_path} ({len(clean_lines)} lines)")
                     ydl_opts['cookiefile'] = writable_path
                     break
     except Exception as e:
-        print(f"Cookie setup warning: {e}")
-    # -----------------------------------------------
+        print(f"Cookie setup error: {e}")
+    # ---------------------------------
         
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
         return out_path
     except Exception as e:
+        # Pass the full error (including verbosity) to logs
+        print(f"FULL ERROR: {str(e)}")
         raise Exception(f"YouTube Download Error: {str(e)}")
 
 # --- API ENDPOINTS ---
