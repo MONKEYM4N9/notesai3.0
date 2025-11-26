@@ -105,36 +105,29 @@ def get_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([line['text'] for line in transcript_list])
-    except Exception:
+    except Exception as e:
+        print(f"Transcript Error: {e}")
         return None
 
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
     
+    # 1. Flexible Output
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    # Use 'bestaudio' - Android usually serves m4a or webm, we will convert it
-    fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio/best'
-    
+    # 2. Minimalist Options (No fake Headers, No fake Clients)
     ydl_opts = {
-        'format': fmt,
+        'format': 'bestaudio/best', # Just get the best audio
         'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        'verbose': True,
-        
-        # --- ANDROID MODE ---
-        # This usually forces a single-file download instead of fragments
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android']
-            }
-        }
+        'verbose': True, # Keep debug logs on just in case
     }
 
+    # 3. Convert whatever we get to MP3 (Safety Net)
     if mode == "audio":
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
@@ -143,7 +136,7 @@ def download_youtube_media(url, mode="audio"):
         }]
         ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
-    # --- COOKIE CLEANER ---
+    # --- COOKIE CLEANER (STILL ESSENTIAL) ---
     try:
         if os.path.exists("/etc/secrets"):
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
