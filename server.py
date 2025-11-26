@@ -110,26 +110,39 @@ def get_transcript(video_id):
 
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
-    ext = "mp4" if mode == "video" else "m4a"
+    
+    # RELAXED FORMAT LOGIC:
+    # We output to .mp3 because we will convert whatever we get
+    ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio[ext=m4a]/bestaudio'
+    # Relaxed selector: "Just give me the best audio/video you have"
+    fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio/best'
     
     ydl_opts = {
         'format': fmt,
-        'outtmpl': out_path,
+        'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s", # Temp template
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        'verbose': True, # ENABLE DEBUG LOGS
-        # Mimic standard Chrome
+        'verbose': True,
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
     }
 
-    # --- AGGRESSIVE COOKIE CLEANER ---
+    # IF AUDIO: Force conversion to MP3 so we don't get weird .webm errors
+    if mode == "audio":
+        ydl_opts['postprocessors'] = [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192',
+        }]
+        # Force the final path to match the mp3 extension
+        ydl_opts['outtmpl'] = out_path.replace(".mp3", "") # yt-dlp adds extension automatically
+
+    # --- COOKIE CLEANER ---
     try:
         if os.path.exists("/etc/secrets"):
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
@@ -138,23 +151,16 @@ def download_youtube_media(url, mode="audio"):
                 read_only_path = f"/etc/secrets/{cookie_name}"
                 if os.path.exists(read_only_path):
                     print(f"SUCCESS: Found raw cookie file at {read_only_path}")
-                    
                     writable_path = os.path.join(temp_dir, "clean_cookies.txt")
                     
                     with open(read_only_path, 'r', encoding='utf-8') as infile:
                         raw_lines = infile.readlines()
                     
                     clean_lines = []
-                    # Ensure Header exists
                     clean_lines.append("# Netscape HTTP Cookie File\n")
-                    
                     for line in raw_lines:
-                        # Strip whitespace and check if line is empty
                         s_line = line.strip()
-                        if not s_line or s_line.startswith("# Netscape"): 
-                            continue # Skip empty lines and duplicate headers
-                        
-                        # Add valid lines back with Linux newline
+                        if not s_line or s_line.startswith("# Netscape"): continue
                         clean_lines.append(s_line + "\n")
                             
                     with open(writable_path, 'w', encoding='utf-8') as outfile:
@@ -165,14 +171,22 @@ def download_youtube_media(url, mode="audio"):
                     break
     except Exception as e:
         print(f"Cookie setup error: {e}")
-    # ---------------------------------
+    # ----------------------
         
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
-        return out_path
+        
+        # Correction for filenames: 
+        # yt-dlp might output 'filename.mp3', ensuring we return the correct path
+        final_path = out_path
+        if mode == 'audio' and not os.path.exists(final_path):
+             # If exact path doesn't exist, check if it appended .mp3
+             if os.path.exists(out_path + ".mp3"):
+                 final_path = out_path + ".mp3"
+        
+        return final_path
     except Exception as e:
-        # Pass the full error (including verbosity) to logs
         print(f"FULL ERROR: {str(e)}")
         raise Exception(f"YouTube Download Error: {str(e)}")
 
