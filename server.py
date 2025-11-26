@@ -112,22 +112,26 @@ def get_transcript(video_id):
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
     
-    # 1. Flexible Output
+    # Flexible output
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    # 2. Minimalist Options (No fake Headers, No fake Clients)
     ydl_opts = {
-        'format': 'bestaudio/best', # Just get the best audio
+        'format': 'bestaudio/best',
         'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        'verbose': True, # Keep debug logs on just in case
+        'verbose': True,
+        # --- OAUTH2 LOGIN MODE ---
+        # This tells yt-dlp to authenticate via the "Connect a Device" flow
+        'username': 'oauth2',
+        'password': '',
+        # We need to cache the token so we only login once
+        'cache_dir': '/tmp/cache',
     }
 
-    # 3. Convert whatever we get to MP3 (Safety Net)
     if mode == "audio":
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
@@ -136,37 +140,6 @@ def download_youtube_media(url, mode="audio"):
         }]
         ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
-    # --- COOKIE CLEANER (STILL ESSENTIAL) ---
-    try:
-        if os.path.exists("/etc/secrets"):
-            possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
-            
-            for cookie_name in possible_cookies:
-                read_only_path = f"/etc/secrets/{cookie_name}"
-                if os.path.exists(read_only_path):
-                    print(f"SUCCESS: Found raw cookie file at {read_only_path}")
-                    writable_path = os.path.join(temp_dir, "clean_cookies.txt")
-                    
-                    with open(read_only_path, 'r', encoding='utf-8') as infile:
-                        raw_lines = infile.readlines()
-                    
-                    clean_lines = []
-                    clean_lines.append("# Netscape HTTP Cookie File\n")
-                    for line in raw_lines:
-                        s_line = line.strip()
-                        if not s_line or s_line.startswith("# Netscape"): continue
-                        clean_lines.append(s_line + "\n")
-                            
-                    with open(writable_path, 'w', encoding='utf-8') as outfile:
-                        outfile.writelines(clean_lines)
-                        
-                    print(f"CLEANED cookies saved to: {writable_path}")
-                    ydl_opts['cookiefile'] = writable_path
-                    break
-    except Exception as e:
-        print(f"Cookie setup error: {e}")
-    # ----------------------
-        
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
@@ -226,6 +199,7 @@ async def process_lecture_api(
                     temp_file_path = download_youtube_media(url, mode)
                     is_downloaded = True
                 except Exception as e:
+                    # Pass the AUTH ERROR to the user so they can see the code
                     raise HTTPException(status_code=400, detail=str(e))
 
         elif file:
@@ -268,6 +242,7 @@ async def process_lecture_api(
             except: pass
 
         return JSONResponse(content={"status": "success", "notes": "\n\n".join(final_notes)})
+    except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
     finally:
         if is_downloaded and temp_file_path and os.path.exists(temp_file_path):
