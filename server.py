@@ -101,7 +101,7 @@ def download_youtube_media(url, mode="audio"):
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    # Use 'bestaudio/best' for flexibility
+    # Use 'bestaudio/best' to accept whatever YouTube gives us
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
@@ -110,21 +110,22 @@ def download_youtube_media(url, mode="audio"):
         'nocheckcertificate': True,
         'force_ipv4': True,
         'verbose': True,
+        # Add a tiny sleep to mimic human behavior
+        'sleep_interval': 2,
         
-        # --- ANDROID MODE (Correctly Configured) ---
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android']
-            }
+        # --- FIREFOX ALIGNMENT ---
+        # This matches the User-Agent to your specific cookies.
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+            'Accept-Language': 'en-US,en;q=0.5',
         }
-        # Note: NO manual 'http_headers' here! Let yt-dlp handle it.
     }
 
     if mode == "audio":
         ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
         ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
-    # --- COOKIE LOADING ---
+    # --- COOKIE LOADING & CLEANING ---
     try:
         if os.path.exists("/etc/secrets"):
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
@@ -133,10 +134,13 @@ def download_youtube_media(url, mode="audio"):
                 if os.path.exists(read_only_path):
                     print(f"Found cookies at {read_only_path}")
                     writable_path = os.path.join(temp_dir, "clean_cookies.txt")
+                    
                     with open(read_only_path, 'r', encoding='utf-8') as infile:
+                        # Clean newlines and fix common format issues
                         content = infile.read().replace('\r\n', '\n').replace('\r', '\n')
                         if "# Netscape HTTP Cookie File" not in content:
                             content = "# Netscape HTTP Cookie File\n" + content
+                            
                     with open(writable_path, 'w', encoding='utf-8') as outfile:
                         outfile.write(content)
                     
