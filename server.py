@@ -121,31 +121,19 @@ def download_youtube_media(url, mode="audio"):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # --- THE MAGIC FIX: PRETEND TO BE ANDROID ---
-        # This usually bypasses the "Bot/Sign-in" check for server IPs
+        # --- iOS MODE (No Cookies) ---
+        # We REMOVED the cookie logic because the geo-mismatch was triggering the block.
+        # Instead, we mimic an iOS device (iPhone), which often bypasses these checks.
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['ios']
             }
+        },
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
         }
-        # --------------------------------------------
     }
 
-    try:
-        if os.path.exists("/etc/secrets"):
-            possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
-            for cookie_name in possible_cookies:
-                read_only_path = f"/etc/secrets/{cookie_name}"
-                if os.path.exists(read_only_path):
-                    print(f"SUCCESS: Found cookie file at {read_only_path}")
-                    writable_path = os.path.join(temp_dir, "my_cookies.txt")
-                    shutil.copy(read_only_path, writable_path)
-                    print(f"COPIED cookies to writable path: {writable_path}")
-                    ydl_opts['cookiefile'] = writable_path
-                    break
-    except Exception as e:
-        print(f"Cookie setup warning: {e}")
-        
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
