@@ -121,19 +121,47 @@ def download_youtube_media(url, mode="audio"):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # --- iOS MODE (No Cookies) ---
-        # We REMOVED the cookie logic because the geo-mismatch was triggering the block.
-        # Instead, we mimic an iOS device (iPhone), which often bypasses these checks.
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios']
-            }
-        },
+        'force_ipv4': True,
+        # Browser Masquerade (Standard, safe User-Agent)
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
     }
 
+    # --- THE COOKIE CLEANER (Based on yt-dlp Wiki) ---
+    try:
+        if os.path.exists("/etc/secrets"):
+            possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
+            
+            for cookie_name in possible_cookies:
+                read_only_path = f"/etc/secrets/{cookie_name}"
+                if os.path.exists(read_only_path):
+                    print(f"SUCCESS: Found raw cookie file at {read_only_path}")
+                    
+                    # Define destination
+                    writable_path = os.path.join(temp_dir, "clean_cookies.txt")
+                    
+                    # CLEAN THE FILE (Fix Newlines & Formatting)
+                    with open(read_only_path, 'r', encoding='utf-8') as infile:
+                        content = infile.read()
+                        
+                        # 1. Force Linux Newlines (\n only, no \r)
+                        content = content.replace('\r\n', '\n').replace('\r', '\n')
+                        
+                        # 2. Ensure Netscape Header exists (Crucial per Wiki)
+                        if "# Netscape HTTP Cookie File" not in content:
+                            content = "# Netscape HTTP Cookie File\n" + content
+                            
+                    with open(writable_path, 'w', encoding='utf-8') as outfile:
+                        outfile.write(content)
+                        
+                    print(f"CLEANED and saved cookies to: {writable_path}")
+                    ydl_opts['cookiefile'] = writable_path
+                    break
+    except Exception as e:
+        print(f"Cookie setup warning: {e}")
+    # -----------------------------------------------
+        
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
