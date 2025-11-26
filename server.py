@@ -44,15 +44,19 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 # --- SECRETS MANAGEMENT ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# Check for API Key in Secret File if env var is missing
+# Check for API Key in Secret File
 if not SERVER_API_KEY:
-    secret_path = "/etc/secrets/google_key"
-    if os.path.exists(secret_path):
-        try:
-            with open(secret_path, "r") as f:
-                SERVER_API_KEY = f.read().strip()
-            print("Loaded API Key from Secret File")
-        except: pass
+    # Try multiple common names for the key file
+    possible_keys = ["google_key", "google_api_key", "google_key.txt"]
+    for name in possible_keys:
+        path = f"/etc/secrets/{name}"
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    SERVER_API_KEY = f.read().strip()
+                print(f"Loaded API Key from {name}")
+                break
+            except: pass
 
 def resolve_api_key(user_key: Optional[str] = None) -> str:
     final_key = user_key if user_key and user_key.strip() else SERVER_API_KEY
@@ -101,7 +105,6 @@ def get_video_id(url):
 
 def get_transcript(video_id):
     try:
-        # Try to fetch transcript normally
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([line['text'] for line in transcript_list])
     except Exception:
@@ -125,13 +128,24 @@ def download_youtube_media(url, mode="audio"):
         }
     }
 
-    # --- COOKIE INJECTION (THE FIX) ---
-    # Render puts secrets in /etc/secrets/
-    cookie_path = "/etc/secrets/youtube_cookies"
-    if os.path.exists(cookie_path):
-        print("Using YouTube Cookies from Secret File")
-        ydl_opts['cookiefile'] = cookie_path
-    # ----------------------------------
+    # --- ROBUST COOKIE FINDER ---
+    # We now print all files in secrets to debug, and check multiple names
+    try:
+        if os.path.exists("/etc/secrets"):
+            print(f"DEBUG: Files in secrets folder: {os.listdir('/etc/secrets')}")
+            
+            # List of possible filenames the user might have used
+            possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
+            
+            for cookie_name in possible_cookies:
+                cookie_path = f"/etc/secrets/{cookie_name}"
+                if os.path.exists(cookie_path):
+                    print(f"SUCCESS: Found cookie file at {cookie_path}")
+                    ydl_opts['cookiefile'] = cookie_path
+                    break
+    except Exception as e:
+        print(f"Cookie check error: {e}")
+    # ----------------------------
         
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
@@ -234,8 +248,13 @@ async def process_lecture_api(
             except: pass
 
 @app.post("/chat")
-async def chat_api(req: BaseModel): pass 
-# (Remember to include the rest of your Chat/Quiz/MindMap endpoints here when you update the file!)
+async def chat_api(req: BaseModel): pass
+@app.post("/generate-quiz")
+async def generate_quiz_api(req: BaseModel): pass
+@app.post("/generate-mindmap")
+async def generate_mindmap_api(req: BaseModel): pass
+@app.post("/generate-pdf")
+async def generate_pdf_api(req: BaseModel): pass
 
 if __name__ == "__main__":
     import uvicorn
