@@ -44,6 +44,7 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 # --- SECRETS MANAGEMENT ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
+# Fallback: Check Secret Files if Env Var is missing
 if not SERVER_API_KEY:
     possible_keys = ["google_key", "google_api_key", "google_key.txt"]
     for name in possible_keys:
@@ -105,45 +106,91 @@ def get_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([line['text'] for line in transcript_list])
-    except Exception as e:
-        print(f"Transcript Error: {e}")
+    except Exception:
         return None
 
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
     
-    # Flexible output
+    # Flexible Output: Convert whatever we get to MP3 later
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
+    # Use 'bestaudio/best' to avoid "Requested format not available" errors
+    fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio/best'
+    
     ydl_opts = {
-        'format': 'bestaudio/best',
+        'format': fmt,
+        # Temporary template (yt-dlp handles extensions)
         'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        'verbose': True,
-        # --- OAUTH2 LOGIN MODE ---
-        # This tells yt-dlp to authenticate via the "Connect a Device" flow
-        'username': 'oauth2',
-        'password': '',
-        # We need to cache the token so we only login once
-        'cache_dir': '/tmp/cache',
+        'verbose': True, # Debug logs enabled
+        # Standard User Agent to match your Browser Cookies
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        }
     }
 
+    # If audio, force conversion to MP3 to ensure compatibility
     if mode == "audio":
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
+        # Ensure logic knows the final file will be .mp3
         ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
+    # --- THE COOKIE CLEANER ---
+    # This fixes the "Invalid Newline" and "Read-only file system" errors
+    try:
+        if os.path.exists("/etc/secrets"):
+            # Check all common names for the cookie file
+            possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
+            
+            for cookie_name in possible_cookies:
+                read_only_path = f"/etc/secrets/{cookie_name}"
+                if os.path.exists(read_only_path):
+                    print(f"SUCCESS: Found raw cookie file at {read_only_path}")
+                    
+                    # Define a writable path in /tmp/
+                    writable_path = os.path.join(temp_dir, "clean_cookies.txt")
+                    
+                    # Read & Scrub the file
+                    with open(read_only_path, 'r', encoding='utf-8') as infile:
+                        raw_lines = infile.readlines()
+                    
+                    clean_lines = []
+                    # Ensure Netscape Header exists
+                    clean_lines.append("# Netscape HTTP Cookie File\n")
+                    
+                    for line in raw_lines:
+                        s_line = line.strip()
+                        # Skip empty lines or duplicate headers
+                        if not s_line or s_line.startswith("# Netscape"): 
+                            continue
+                        # Add valid lines back with proper Linux newline (\n)
+                        clean_lines.append(s_line + "\n")
+                            
+                    # Write cleaned data to temp folder
+                    with open(writable_path, 'w', encoding='utf-8') as outfile:
+                        outfile.writelines(clean_lines)
+                        
+                    print(f"CLEANED cookies saved to: {writable_path} ({len(clean_lines)} lines)")
+                    ydl_opts['cookiefile'] = writable_path
+                    break
+    except Exception as e:
+        print(f"Cookie setup warning: {e}")
+    # --------------------------
+        
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
         
+        # Logic to return the correct filename if yt-dlp added an extension
         final_path = out_path
         if mode == 'audio' and not os.path.exists(final_path):
              if os.path.exists(out_path + ".mp3"):
@@ -151,7 +198,8 @@ def download_youtube_media(url, mode="audio"):
         
         return final_path
     except Exception as e:
-        print(f"FULL ERROR: {str(e)}")
+        # Log full error for debugging
+        print(f"FULL DOWNLOAD ERROR: {str(e)}")
         raise Exception(f"YouTube Download Error: {str(e)}")
 
 # --- API ENDPOINTS ---
@@ -199,7 +247,6 @@ async def process_lecture_api(
                     temp_file_path = download_youtube_media(url, mode)
                     is_downloaded = True
                 except Exception as e:
-                    # Pass the AUTH ERROR to the user so they can see the code
                     raise HTTPException(status_code=400, detail=str(e))
 
         elif file:
@@ -242,21 +289,28 @@ async def process_lecture_api(
             except: pass
 
         return JSONResponse(content={"status": "success", "notes": "\n\n".join(final_notes)})
-    except HTTPException as he: raise he
     except Exception as e: raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
     finally:
         if is_downloaded and temp_file_path and os.path.exists(temp_file_path):
             try: os.unlink(temp_file_path)
             except: pass
 
+# --- PLACEHOLDERS FOR OTHER ENDPOINTS (Add full logic if needed) ---
 @app.post("/chat")
-async def chat_api(req: BaseModel): pass
+async def chat_api(req: BaseModel): 
+    return JSONResponse(content={"response": "Chat feature requires full context logic."})
+
 @app.post("/generate-quiz")
-async def generate_quiz_api(req: BaseModel): pass
+async def generate_quiz_api(req: BaseModel):
+    return JSONResponse(content=[])
+
 @app.post("/generate-mindmap")
-async def generate_mindmap_api(req: BaseModel): pass
+async def generate_mindmap_api(req: BaseModel):
+    return JSONResponse(content={"dot_code": ""})
+
 @app.post("/generate-pdf")
-async def generate_pdf_api(req: BaseModel): pass
+async def generate_pdf_api(req: BaseModel):
+    return Response(content=b"", media_type="application/pdf")
 
 if __name__ == "__main__":
     import uvicorn
