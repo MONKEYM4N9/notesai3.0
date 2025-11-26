@@ -28,7 +28,6 @@ from youtube_transcript_api import YouTubeTranscriptApi
 from urllib.parse import urlparse, parse_qs
 from fpdf import FPDF
 
-# --- CONFIGURATION ---
 app = FastAPI()
 
 app.add_middleware(
@@ -41,19 +40,15 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-# --- SECRETS MANAGEMENT ---
+# --- SECRETS ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
-
-# Fallback: Check Secret Files if Env Var is missing
 if not SERVER_API_KEY:
     possible_keys = ["google_key", "google_api_key", "google_key.txt"]
     for name in possible_keys:
         path = f"/etc/secrets/{name}"
         if os.path.exists(path):
             try:
-                with open(path, "r") as f:
-                    SERVER_API_KEY = f.read().strip()
-                print(f"Loaded API Key from {name}")
+                with open(path, "r") as f: SERVER_API_KEY = f.read().strip()
                 break
             except: pass
 
@@ -62,7 +57,7 @@ def resolve_api_key(user_key: Optional[str] = None) -> str:
     if not final_key: return ""
     return final_key
 
-# --- FFmpeg SETUP ---
+# --- FFmpeg ---
 def get_ffmpeg_command():
     if shutil.which("ffmpeg"): return "ffmpeg"
     return "ffmpeg" 
@@ -70,16 +65,9 @@ def get_ffmpeg_command():
 # --- HELPER FUNCTIONS ---
 def get_system_prompt(detail_level, context_type, part_info="", custom_focus=""):
     base = f"You are an expert Academic Tutor. {part_info} "
-    if custom_focus:
-        base += f"\nIMPORTANT: The user specifically requested: '{custom_focus}'. PRIORITIZE THIS.\n"
-    base += """
-    STRUCTURE REQUIREMENTS:
-    1. Start with a '## ⚡ TL;DR' section (Core Topic, Exam Probability, Difficulty).
-    2. Then, provide the main notes using Markdown headers (##) and bullet points.
-    """
-    if "Summary" in detail_level: return base + f"Create a CONCISE SUMMARY of this {context_type}."
-    elif "Exhaustive" in detail_level: return base + f"Create EXHAUSTIVE NOTES of this {context_type}."
-    else: return base + f"Create STANDARD STUDY NOTES of this {context_type}."
+    if custom_focus: base += f"\nIMPORTANT: The user specifically requested: '{custom_focus}'. PRIORITIZE THIS.\n"
+    base += "STRUCTURE REQUIREMENTS:\n1. Start with a '## ⚡ TL;DR' section.\n2. Then, provide the main notes using Markdown headers (##) and bullet points."
+    return base
 
 def get_media_duration(file_path):
     try:
@@ -106,100 +94,64 @@ def get_transcript(video_id):
     try:
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([line['text'] for line in transcript_list])
-    except Exception:
-        return None
+    except: return None
 
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
-    
-    # Flexible Output: Convert whatever we get to MP3 later
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    # Use 'bestaudio/best' to avoid "Requested format not available" errors
-    fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio/best'
-    
+    # Use 'bestaudio/best' for flexibility
     ydl_opts = {
-        'format': fmt,
-        # Temporary template (yt-dlp handles extensions)
+        'format': 'bestaudio/best',
         'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
-        'verbose': True, # Debug logs enabled
-        # Standard User Agent to match your Browser Cookies
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'verbose': True,
+        
+        # --- ANDROID MODE (Correctly Configured) ---
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android']
+            }
         }
+        # Note: NO manual 'http_headers' here! Let yt-dlp handle it.
     }
 
-    # If audio, force conversion to MP3 to ensure compatibility
     if mode == "audio":
-        ydl_opts['postprocessors'] = [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }]
-        # Ensure logic knows the final file will be .mp3
+        ydl_opts['postprocessors'] = [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}]
         ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
-    # --- THE COOKIE CLEANER ---
-    # This fixes the "Invalid Newline" and "Read-only file system" errors
+    # --- COOKIE LOADING ---
     try:
         if os.path.exists("/etc/secrets"):
-            # Check all common names for the cookie file
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
-            
             for cookie_name in possible_cookies:
                 read_only_path = f"/etc/secrets/{cookie_name}"
                 if os.path.exists(read_only_path):
-                    print(f"SUCCESS: Found raw cookie file at {read_only_path}")
-                    
-                    # Define a writable path in /tmp/
+                    print(f"Found cookies at {read_only_path}")
                     writable_path = os.path.join(temp_dir, "clean_cookies.txt")
-                    
-                    # Read & Scrub the file
                     with open(read_only_path, 'r', encoding='utf-8') as infile:
-                        raw_lines = infile.readlines()
-                    
-                    clean_lines = []
-                    # Ensure Netscape Header exists
-                    clean_lines.append("# Netscape HTTP Cookie File\n")
-                    
-                    for line in raw_lines:
-                        s_line = line.strip()
-                        # Skip empty lines or duplicate headers
-                        if not s_line or s_line.startswith("# Netscape"): 
-                            continue
-                        # Add valid lines back with proper Linux newline (\n)
-                        clean_lines.append(s_line + "\n")
-                            
-                    # Write cleaned data to temp folder
+                        content = infile.read().replace('\r\n', '\n').replace('\r', '\n')
+                        if "# Netscape HTTP Cookie File" not in content:
+                            content = "# Netscape HTTP Cookie File\n" + content
                     with open(writable_path, 'w', encoding='utf-8') as outfile:
-                        outfile.writelines(clean_lines)
-                        
-                    print(f"CLEANED cookies saved to: {writable_path} ({len(clean_lines)} lines)")
+                        outfile.write(content)
+                    
                     ydl_opts['cookiefile'] = writable_path
                     break
-    except Exception as e:
-        print(f"Cookie setup warning: {e}")
-    # --------------------------
-        
+    except Exception as e: print(f"Cookie error: {e}")
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
-            ydl.download([url])
-        
-        # Logic to return the correct filename if yt-dlp added an extension
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl: ydl.download([url])
         final_path = out_path
         if mode == 'audio' and not os.path.exists(final_path):
-             if os.path.exists(out_path + ".mp3"):
-                 final_path = out_path + ".mp3"
-        
+             if os.path.exists(out_path + ".mp3"): final_path = out_path + ".mp3"
         return final_path
     except Exception as e:
-        # Log full error for debugging
-        print(f"FULL DOWNLOAD ERROR: {str(e)}")
+        print(f"DL Error: {e}")
         raise Exception(f"YouTube Download Error: {str(e)}")
 
 # --- API ENDPOINTS ---
@@ -207,68 +159,43 @@ def download_youtube_media(url, mode="audio"):
 async def serve_index():
     try:
         with open("index.html", "r", encoding="utf-8") as f: return f.read()
-    except FileNotFoundError: return "Error: index.html not found"
+    except: return "Error"
 
 @app.get("/api-status")
-async def get_api_status():
-    return {"has_key": SERVER_API_KEY is not None}
+async def get_api_status(): return {"has_key": SERVER_API_KEY is not None}
 
 @app.post("/process-lecture")
-async def process_lecture_api(
-    file: UploadFile = File(None),
-    url: Optional[str] = Form(None),
-    mode: str = Form("transcript"), 
-    api_key: Optional[str] = Form(None),
-    detail_level: str = Form(...),
-    custom_focus: str = Form("")
-):
+async def process_lecture_api(file: UploadFile = File(None), url: Optional[str] = Form(None), mode: str = Form("transcript"), api_key: Optional[str] = Form(None), detail_level: str = Form(...), custom_focus: str = Form("")):
     valid_key = resolve_api_key(api_key)
-    if not valid_key: raise HTTPException(status_code=400, detail="API Key Required")
-    
     genai.configure(api_key=valid_key)
     final_notes = []; temp_file_path = None; is_downloaded = False
-    
     try:
         if url:
             if mode == "transcript":
                 vid = get_video_id(url)
-                if not vid: raise HTTPException(status_code=400, detail="Could not parse YouTube URL.")
-                txt = get_transcript(vid)
-                if txt:
-                    model = genai.GenerativeModel("gemini-2.0-flash-lite")
-                    res = model.generate_content([get_system_prompt(detail_level, "transcript", "", custom_focus), txt])
-                    return JSONResponse(content={"status": "success", "notes": res.text})
-                else: 
-                    print("Transcript failed, falling back to audio download...")
-                    mode = "audio"
-            
+                if vid:
+                    txt = get_transcript(vid)
+                    if txt:
+                        model = genai.GenerativeModel("gemini-2.0-flash-lite")
+                        res = model.generate_content([get_system_prompt(detail_level, "transcript", "", custom_focus), txt])
+                        return JSONResponse(content={"status": "success", "notes": res.text})
+                    else: mode = "audio"
             if mode in ["audio", "video"]:
-                try:
-                    temp_file_path = download_youtube_media(url, mode)
-                    is_downloaded = True
-                except Exception as e:
-                    raise HTTPException(status_code=400, detail=str(e))
-
+                temp_file_path = download_youtube_media(url, mode); is_downloaded = True
         elif file:
             _, ext = os.path.splitext(file.filename)
             with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp: shutil.copyfileobj(file.file, tmp); temp_file_path = tmp.name
         
         if temp_file_path:
-            if os.path.splitext(temp_file_path)[1].lower() in ['.txt', '.md']:
-                with open(temp_file_path, 'r', encoding='utf-8') as f: 
-                    model = genai.GenerativeModel("gemini-2.0-flash-lite")
-                    res = model.generate_content([get_system_prompt(detail_level, "transcript", "", custom_focus), f.read()])
-                    final_notes.append(res.text)
+            model = genai.GenerativeModel("gemini-2.0-flash-lite")
+            if os.path.splitext(temp_file_path)[1] in ['.txt','.md']:
+                 with open(temp_file_path,'r',encoding='utf-8') as f: final_notes.append(model.generate_content([get_system_prompt(detail_level,"transcript","",custom_focus), f.read()]).text)
             else:
-                model = genai.GenerativeModel("gemini-2.0-flash-lite")
                 dur = get_media_duration(temp_file_path)
-                if dur == 0: raise HTTPException(status_code=400, detail="Invalid media file (0 duration).")
-                
                 chunk = 1200; chunks = math.ceil(dur / chunk)
                 for i in range(chunks):
                     start = i * chunk; end = min((i + 1) * chunk, dur)
-                    ext = os.path.splitext(temp_file_path)[1]
-                    c_path = f"temp_chunk_{i}{ext}"
+                    c_path = f"temp_chunk_{i}{os.path.splitext(temp_file_path)[1]}"
                     cut_media_fast(temp_file_path, c_path, start, end)
                     try:
                         v_file = genai.upload_file(path=c_path)
@@ -278,39 +205,21 @@ async def process_lecture_api(
                         final_notes.append(res.text)
                     finally: 
                         if os.path.exists(c_path): os.unlink(c_path)
-        
-        if len(final_notes) > 1:
-            try:
-                synth_model = genai.GenerativeModel("gemini-2.0-flash-lite")
-                combined_text = "\n\n".join(final_notes)
-                synth_prompt = f"""SYNTHESIZE these parts into ONE cohesive study guide. Remove 'Part X' breaks. Combine TL;DRs. Rules: Maintain depth. Prioritize custom focus: '{custom_focus}'. RAW NOTES:\n{combined_text}"""
-                synth_response = synth_model.generate_content(synth_prompt)
-                final_notes = [synth_response.text]
-            except: pass
-
         return JSONResponse(content={"status": "success", "notes": "\n\n".join(final_notes)})
-    except Exception as e: raise HTTPException(status_code=500, detail=f"Server Error: {str(e)}")
+    except Exception as e: raise HTTPException(status_code=500, detail=str(e))
     finally:
         if is_downloaded and temp_file_path and os.path.exists(temp_file_path):
             try: os.unlink(temp_file_path)
             except: pass
 
-# --- PLACEHOLDERS FOR OTHER ENDPOINTS (Add full logic if needed) ---
 @app.post("/chat")
-async def chat_api(req: BaseModel): 
-    return JSONResponse(content={"response": "Chat feature requires full context logic."})
-
+async def chat_api(req: BaseModel): pass
 @app.post("/generate-quiz")
-async def generate_quiz_api(req: BaseModel):
-    return JSONResponse(content=[])
-
+async def generate_quiz_api(req: BaseModel): pass
 @app.post("/generate-mindmap")
-async def generate_mindmap_api(req: BaseModel):
-    return JSONResponse(content={"dot_code": ""})
-
+async def generate_mindmap_api(req: BaseModel): pass
 @app.post("/generate-pdf")
-async def generate_pdf_api(req: BaseModel):
-    return Response(content=b"", media_type="application/pdf")
+async def generate_pdf_api(req: BaseModel): pass
 
 if __name__ == "__main__":
     import uvicorn
