@@ -41,28 +41,22 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-# --- SECRETS MANAGEMENT (UPDATED FOR RENDER FILES) ---
+# --- SECRETS MANAGEMENT ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# If Environment Variable is empty, check the Render Secret File
+# Check for API Key in Secret File if env var is missing
 if not SERVER_API_KEY:
-    # Render mounts secrets to /etc/secrets/<filename>
-    # We will look for a file named 'google_key'
     secret_path = "/etc/secrets/google_key"
-    
     if os.path.exists(secret_path):
         try:
             with open(secret_path, "r") as f:
-                # Read the key and strip any whitespace/newlines
                 SERVER_API_KEY = f.read().strip()
-            print("Successfully loaded API Key from Secret File")
-        except Exception as e:
-            print(f"Error reading secret file: {e}")
+            print("Loaded API Key from Secret File")
+        except: pass
 
 def resolve_api_key(user_key: Optional[str] = None) -> str:
     final_key = user_key if user_key and user_key.strip() else SERVER_API_KEY
-    if not final_key:
-        return ""
+    if not final_key: return ""
     return final_key
 
 # --- FFmpeg SETUP ---
@@ -107,6 +101,7 @@ def get_video_id(url):
 
 def get_transcript(video_id):
     try:
+        # Try to fetch transcript normally
         transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
         return " ".join([line['text'] for line in transcript_list])
     except Exception:
@@ -129,6 +124,14 @@ def download_youtube_media(url, mode="audio"):
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
     }
+
+    # --- COOKIE INJECTION (THE FIX) ---
+    # Render puts secrets in /etc/secrets/
+    cookie_path = "/etc/secrets/youtube_cookies"
+    if os.path.exists(cookie_path):
+        print("Using YouTube Cookies from Secret File")
+        ydl_opts['cookiefile'] = cookie_path
+    # ----------------------------------
         
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
@@ -231,7 +234,8 @@ async def process_lecture_api(
             except: pass
 
 @app.post("/chat")
-async def chat_api(req: BaseModel): pass # (Logic truncated for brevity, use full file)
+async def chat_api(req: BaseModel): pass 
+# (Remember to include the rest of your Chat/Quiz/MindMap endpoints here when you update the file!)
 
 if __name__ == "__main__":
     import uvicorn
