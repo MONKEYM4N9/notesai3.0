@@ -41,20 +41,34 @@ app.add_middleware(
 
 app.mount("/static", StaticFiles(directory="."), name="static")
 
-# --- SECRETS ---
+# --- SECRETS MANAGEMENT (UPDATED FOR RENDER FILES) ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
+
+# If Environment Variable is empty, check the Render Secret File
+if not SERVER_API_KEY:
+    # Render mounts secrets to /etc/secrets/<filename>
+    # We will look for a file named 'google_key'
+    secret_path = "/etc/secrets/google_key"
+    
+    if os.path.exists(secret_path):
+        try:
+            with open(secret_path, "r") as f:
+                # Read the key and strip any whitespace/newlines
+                SERVER_API_KEY = f.read().strip()
+            print("Successfully loaded API Key from Secret File")
+        except Exception as e:
+            print(f"Error reading secret file: {e}")
 
 def resolve_api_key(user_key: Optional[str] = None) -> str:
     final_key = user_key if user_key and user_key.strip() else SERVER_API_KEY
     if not final_key:
-        # We don't raise error here, we let the frontend prompt the user
         return ""
     return final_key
 
 # --- FFmpeg SETUP ---
 def get_ffmpeg_command():
     if shutil.which("ffmpeg"): return "ffmpeg"
-    return "ffmpeg" # Fallback
+    return "ffmpeg" 
 
 # --- HELPER FUNCTIONS ---
 def get_system_prompt(detail_level, context_type, part_info="", custom_focus=""):
@@ -111,7 +125,6 @@ def download_youtube_media(url, mode="audio"):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        # Browser Masquerade (Keeps YouTube happy)
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         }
@@ -218,14 +231,9 @@ async def process_lecture_api(
             except: pass
 
 @app.post("/chat")
-async def chat_api(req: BaseModel): # simplified for brevity
-    # (Existing chat logic here - keeping it brief for the guide)
-    pass 
-    # NOTE: Since I am providing the file in chat, use the FULL server.py content from the previous steps, 
-    # just ensure the PORT logic at the bottom matches this:
+async def chat_api(req: BaseModel): pass # (Logic truncated for brevity, use full file)
 
 if __name__ == "__main__":
     import uvicorn
-    # Render sets the PORT env variable. 
     port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
