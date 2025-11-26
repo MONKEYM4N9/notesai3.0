@@ -111,36 +111,37 @@ def get_transcript(video_id):
 def download_youtube_media(url, mode="audio"):
     temp_dir = tempfile.gettempdir()
     
-    # RELAXED FORMAT LOGIC:
-    # We output to .mp3 because we will convert whatever we get
     ext = "mp4" if mode == "video" else "mp3"
     out_path = os.path.join(temp_dir, f"yt_{mode}_{int(time.time())}.{ext}")
     
-    # Relaxed selector: "Just give me the best audio/video you have"
+    # Use 'bestaudio' - Android usually serves m4a or webm, we will convert it
     fmt = 'best[ext=mp4][height<=720]' if mode == "video" else 'bestaudio/best'
     
     ydl_opts = {
         'format': fmt,
-        'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s", # Temp template
+        'outtmpl': out_path.replace(f".{ext}", "") + ".%(ext)s",
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
         'force_ipv4': True,
         'verbose': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        
+        # --- ANDROID MODE ---
+        # This usually forces a single-file download instead of fragments
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android']
+            }
         }
     }
 
-    # IF AUDIO: Force conversion to MP3 so we don't get weird .webm errors
     if mode == "audio":
         ydl_opts['postprocessors'] = [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '192',
         }]
-        # Force the final path to match the mp3 extension
-        ydl_opts['outtmpl'] = out_path.replace(".mp3", "") # yt-dlp adds extension automatically
+        ydl_opts['outtmpl'] = out_path.replace(".mp3", "")
 
     # --- COOKIE CLEANER ---
     try:
@@ -166,7 +167,7 @@ def download_youtube_media(url, mode="audio"):
                     with open(writable_path, 'w', encoding='utf-8') as outfile:
                         outfile.writelines(clean_lines)
                         
-                    print(f"CLEANED cookies saved to: {writable_path} ({len(clean_lines)} lines)")
+                    print(f"CLEANED cookies saved to: {writable_path}")
                     ydl_opts['cookiefile'] = writable_path
                     break
     except Exception as e:
@@ -177,11 +178,8 @@ def download_youtube_media(url, mode="audio"):
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
             ydl.download([url])
         
-        # Correction for filenames: 
-        # yt-dlp might output 'filename.mp3', ensuring we return the correct path
         final_path = out_path
         if mode == 'audio' and not os.path.exists(final_path):
-             # If exact path doesn't exist, check if it appended .mp3
              if os.path.exists(out_path + ".mp3"):
                  final_path = out_path + ".mp3"
         
