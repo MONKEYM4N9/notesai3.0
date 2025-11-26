@@ -44,7 +44,6 @@ app.mount("/static", StaticFiles(directory="."), name="static")
 # --- SECRETS MANAGEMENT ---
 SERVER_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
-# Check for API Key in Secret File
 if not SERVER_API_KEY:
     possible_keys = ["google_key", "google_api_key", "google_key.txt"]
     for name in possible_keys:
@@ -122,34 +121,30 @@ def download_youtube_media(url, mode="audio"):
         'quiet': True,
         'no_warnings': True,
         'nocheckcertificate': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        # --- THE MAGIC FIX: PRETEND TO BE ANDROID ---
+        # This usually bypasses the "Bot/Sign-in" check for server IPs
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
         }
+        # --------------------------------------------
     }
 
-    # --- COOKIE FIX: COPY TO WRITABLE TEMP FOLDER ---
     try:
         if os.path.exists("/etc/secrets"):
             possible_cookies = ["youtube_cookies", "youtube_cookies.txt", "cookies", "cookies.txt"]
-            
             for cookie_name in possible_cookies:
                 read_only_path = f"/etc/secrets/{cookie_name}"
                 if os.path.exists(read_only_path):
                     print(f"SUCCESS: Found cookie file at {read_only_path}")
-                    
-                    # 1. Define a writable path in /tmp/
                     writable_path = os.path.join(temp_dir, "my_cookies.txt")
-                    
-                    # 2. Copy the file (secrets -> tmp)
                     shutil.copy(read_only_path, writable_path)
                     print(f"COPIED cookies to writable path: {writable_path}")
-                    
-                    # 3. Tell downloader to use the WRITABLE copy
                     ydl_opts['cookiefile'] = writable_path
                     break
     except Exception as e:
         print(f"Cookie setup warning: {e}")
-    # -----------------------------------------------
         
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl: 
