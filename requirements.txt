@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+google-generativeai
+moviepy
+imageio-ffmpeg
+yt-dlp
+youtube-transcript-api
+fpdf
